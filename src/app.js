@@ -1,7 +1,8 @@
 const crypto = require('node:crypto');
 const http = require('node:http');
 const { normalizeActions, SUPPORTED_ACTIONS } = require('./actions');
-const { analyzePrivacyReport, ensureDevicePrivacyState, mergeBlockedItems } = require('./privacy');
+const { analyzePrivacyReport, analyzeSniffReport, ensureDevicePrivacyState, mergeBlockedItems } = require('./privacy');
+const { renderDashboardHtml } = require('./ui');
 
 function createApp({ apiToken = process.env.AGENT_API_TOKEN } = {}) {
   const devices = new Map();
@@ -55,11 +56,17 @@ function createApp({ apiToken = process.env.AGENT_API_TOKEN } = {}) {
     try {
       const url = new URL(req.url, 'http://127.0.0.1');
 
+      if (url.pathname === '/' && req.method === 'GET') {
+        res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+        res.end(renderDashboardHtml());
+        return;
+      }
+
       if (url.pathname === '/health' && req.method === 'GET') {
         json(res, 200, {
           status: 'ok',
           supportedActions: Object.keys(SUPPORTED_ACTIONS),
-          privacyFeatures: ['tracker-detection', 'origin-tracing', 'block-recommendations'],
+          privacyFeatures: ['tracker-detection', 'origin-tracing', 'block-recommendations', 'packet-sniffing', 'ui'],
         });
         return;
       }
@@ -95,6 +102,54 @@ function createApp({ apiToken = process.env.AGENT_API_TOKEN } = {}) {
 
         if (!deviceId) {
           json(res, 400, { error: 'deviceId is required.' });
+          return;
+        }
+
+        if (url.pathname === '/api/privacy/sniff' && req.method === 'POST') {
+          const body = await readJson(req);
+          const deviceId = String(body.deviceId || '').trim();
+
+          if (!deviceId) {
+            json(res, 400, { error: 'deviceId is required.' });
+            return;
+          }
+
+          const device = getDevice(deviceId);
+          if (!device) {
+            json(res, 404, { error: 'Device not registered.' });
+            return;
+          }
+
+          const privacyState = ensureDevicePrivacyState(device);
+          const analysis = analyzeSniffReport({ captures: body.captures });
+          const report = {
+            id: crypto.randomUUID(),
+            createdAt: new Date().toISOString(),
+            summary: analysis.summary,
+            captures: analysis.captures,
+            findings: analysis.findings,
+          };
+
+          privacyState.sniffReports.push(report);
+          privacyState.findings.push(...analysis.findings);
+          if (body.autoBlock) {
+            privacyState.blocked = mergeBlockedItems(
+              privacyState.blocked,
+              analysis.blockedRecommendations.map((item) => ({
+                ...item,
+                createdAt: new Date().toISOString(),
+              })),
+            );
+          }
+
+          json(res, 201, {
+            deviceId,
+            reportId: report.id,
+            summary: analysis.summary,
+            findings: analysis.findings,
+            blockedRecommendations: analysis.blockedRecommendations,
+            blocked: privacyState.blocked,
+          });
           return;
         }
 
@@ -250,6 +305,7 @@ function createApp({ apiToken = process.env.AGENT_API_TOKEN } = {}) {
         json(res, 200, {
           deviceId,
           reports: privacyState.reports,
+          sniffReports: privacyState.sniffReports,
           findings: privacyState.findings,
           blocked: privacyState.blocked,
         });

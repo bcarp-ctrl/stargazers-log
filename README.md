@@ -16,6 +16,8 @@ Privacy tracker features:
 - flag likely supercookies and cross-site tracking cookies
 - trace suspicious origins back to the reporting app or domain
 - recommend and store domain/app blocks per device
+- inspect sniffed traffic summaries across WiFi, cellular, Bluetooth, and AirDrop
+- serve a simple built-in dashboard for reviewing findings and blocklists
 
 ## API flow
 
@@ -28,10 +30,11 @@ Privacy tracker features:
 Privacy flow:
 
 1. Submit device observations to `POST /api/privacy/reports`
-2. Review findings and traced origins from the response
-3. Let the backend auto-block recommendations or submit manual blocks to `POST /api/privacy/devices/:deviceId/block`
-4. Export the active blocklist from `GET /api/privacy/devices/:deviceId/block`
-5. Read current privacy status from `GET /api/privacy/devices/:deviceId/status`
+2. Submit sniff captures to `POST /api/privacy/sniff`
+3. Review findings and traced origins from the responses
+4. Let the backend auto-block recommendations or submit manual blocks to `POST /api/privacy/devices/:deviceId/block`
+5. Export the active blocklist from `GET /api/privacy/devices/:deviceId/block`
+6. Read current privacy status from `GET /api/privacy/devices/:deviceId/status`
 
 ## Run
 
@@ -43,6 +46,13 @@ npm start
 Optional environment variables:
 - `PORT`: server port, defaults to `3000`
 - `AGENT_API_TOKEN`: token required in the `x-agent-token` header on every `/api/*` request when set
+
+## User interface
+
+Open `http://localhost:3000/` for a simple dashboard that can:
+- fetch device privacy status
+- fetch the exported blocklist
+- submit sniff capture JSON for analysis
 
 ## Example requests
 
@@ -103,6 +113,34 @@ curl -X POST http://localhost:3000/api/privacy/reports \
   }'
 ```
 
+Submit sniff captures:
+
+```bash
+curl -X POST http://localhost:3000/api/privacy/sniff \
+  -H 'x-agent-token: your-token' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "deviceId":"iphone-1",
+    "autoBlock":true,
+    "captures":[
+      {
+        "channel":"wifi",
+        "remoteHost":"ads.example",
+        "protocol":"https",
+        "appName":"Safari",
+        "packetCount":12,
+        "bytes":4096
+      },
+      {
+        "channel":"bluetooth",
+        "advertiserId":"beacon-123",
+        "appBundleId":"com.example.coupons",
+        "appName":"Coupons+"
+      }
+    ]
+  }'
+```
+
 Export the current device blocklist:
 
 ```bash
@@ -119,6 +157,7 @@ Minimum client flow:
 3. post command execution results to `POST /api/devices/:deviceId/commands/:commandId/result`
 4. post privacy observations to `POST /api/privacy/reports`
 5. fetch the enforceable blocklist from `GET /api/privacy/devices/:deviceId/block`
+6. optionally post sniff captures to `POST /api/privacy/sniff`
 
 Core request and response shapes:
 
@@ -208,6 +247,10 @@ On iPhone, a Shortcut or app can:
 3. inspect the returned `blockedRecommendations`
 4. send selected blocks to `/api/privacy/devices/:deviceId/block`
 5. fetch `/api/privacy/devices/:deviceId/block` and enforce that blocklist locally
+
+## OpenAPI-style contract
+
+A machine-readable contract is available at `/home/runner/work/stargazers-log/stargazers-log/openapi.json`.
 
 Example payload shape for an iPhone client:
 

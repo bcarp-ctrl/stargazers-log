@@ -4,6 +4,7 @@ function ensureDevicePrivacyState(device) {
   if (!device.privacy) {
     device.privacy = {
       reports: [],
+      sniffReports: [],
       findings: [],
       blocked: [],
     };
@@ -232,8 +233,159 @@ function mergeBlockedItems(existingItems, nextItems) {
   return dedupeBlockedItems([...(existingItems || []), ...(nextItems || [])]);
 }
 
+function normalizeCapture(capture) {
+  if (!capture || typeof capture !== 'object') {
+    throw new Error('Each capture must be an object.');
+  }
+
+  const channel = String(capture.channel || '').trim().toLowerCase();
+  if (!['wifi', 'cellular', 'bluetooth', 'airdrop'].includes(channel)) {
+    throw new Error('Capture channel must be wifi, cellular, bluetooth, or airdrop.');
+  }
+
+  const packetCount = Number.isFinite(capture.packetCount) ? capture.packetCount : 1;
+  const bytes = Number.isFinite(capture.bytes) ? capture.bytes : 0;
+
+  return {
+    id: crypto.randomUUID(),
+    channel,
+    remoteHost: String(capture.remoteHost || '').trim().toLowerCase(),
+    protocol: String(capture.protocol || '').trim().toLowerCase(),
+    purpose: String(capture.purpose || '').trim().toLowerCase(),
+    appName: String(capture.appName || '').trim(),
+    appBundleId: String(capture.appBundleId || '').trim(),
+    advertiserId: String(capture.advertiserId || '').trim().toLowerCase(),
+    serviceUuid: String(capture.serviceUuid || '').trim().toLowerCase(),
+    packetCount,
+    bytes,
+  };
+}
+
+function keywordTrackerMatch(value) {
+  return /(track|ads|analytics|beacon|metric|fingerprint)/i.test(value);
+}
+
+function findCaptureIssues(capture) {
+  const issues = [];
+
+  if (['wifi', 'cellular'].includes(capture.channel) && capture.remoteHost && keywordTrackerMatch(capture.remoteHost)) {
+    issues.push({
+      category: 'network-tracker',
+      severity: 'medium',
+      reason: `Potential tracking host seen on ${capture.channel}.`,
+      origin: {
+        type: 'domain',
+        value: capture.remoteHost,
+        sourceApp: capture.appName || capture.appBundleId || null,
+        channel: capture.channel,
+      },
+      block: {
+        type: 'domain',
+        target: capture.remoteHost,
+      },
+    });
+  }
+
+  if (['bluetooth', 'airdrop'].includes(capture.channel) && (capture.advertiserId || capture.serviceUuid)) {
+    issues.push({
+      category: 'proximity-tracker',
+      severity: 'medium',
+      reason: `Persistent nearby identifier observed over ${capture.channel}.`,
+      origin: {
+        type: 'identifier',
+        value: capture.advertiserId || capture.serviceUuid,
+        sourceApp: capture.appName || capture.appBundleId || null,
+        channel: capture.channel,
+      },
+      block: capture.appBundleId
+        ? {
+          type: 'app',
+          target: capture.appBundleId,
+        }
+        : null,
+    });
+  }
+
+  return issues;
+}
+
+function analyzeSniffReport(report) {
+  if (!report || typeof report !== 'object') {
+    throw new Error('Sniff report must be an object.');
+  }
+
+  if (!Array.isArray(report.captures) || report.captures.length === 0) {
+    throw new Error('Sniff report requires a non-empty captures array.');
+  }
+
+  const captures = report.captures.map(normalizeCapture);
+  const findings = captures.flatMap((capture) => findCaptureIssues(capture).map((issue) => ({
+    id: crypto.randomUUID(),
+    captureId: capture.id,
+    kind: 'capture',
+    name: capture.remoteHost || capture.appName || capture.appBundleId || capture.channel,
+    ...issue,
+  })));
+
+  const hostChannels = new Map();
+  for (const capture of captures) {
+    if (!capture.remoteHost) {
+      continue;
+    }
+
+    const channels = hostChannels.get(capture.remoteHost) || new Set();
+    channels.add(capture.channel);
+    hostChannels.set(capture.remoteHost, channels);
+  }
+
+  for (const [remoteHost, channels] of hostChannels.entries()) {
+    if (channels.size >= 2) {
+      findings.push({
+        id: crypto.randomUUID(),
+        kind: 'capture',
+        name: remoteHost,
+        category: 'cross-transport-tracker',
+        severity: 'high',
+        reason: `Origin observed across ${Array.from(channels).join(', ')} transports.`,
+        origin: {
+          type: 'domain',
+          value: remoteHost,
+          channels: Array.from(channels),
+        },
+        block: {
+          type: 'domain',
+          target: remoteHost,
+        },
+      });
+    }
+  }
+
+  const blockedRecommendations = dedupeBlockedItems(
+    findings
+      .filter((finding) => finding.block)
+      .map((finding) => ({
+        ...finding.block,
+        reason: finding.reason,
+        findingId: finding.id,
+      })),
+  );
+
+  return {
+    summary: {
+      captures: captures.length,
+      findings: findings.length,
+      blockedRecommendations: blockedRecommendations.length,
+      channels: Array.from(new Set(captures.map((capture) => capture.channel))),
+    },
+    captures,
+    findings,
+    blockedRecommendations,
+  };
+}
+
 module.exports = {
   analyzePrivacyReport,
+  analyzeSniffReport,
   ensureDevicePrivacyState,
   mergeBlockedItems,
 };

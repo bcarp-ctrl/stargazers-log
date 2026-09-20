@@ -36,7 +36,24 @@ test('health endpoint reports supported actions', async () => {
 
   assert.equal(response.status, 200);
   assert.deepEqual(body.supportedActions, ['open_app', 'open_url', 'send_text', 'run_shortcut']);
-  assert.deepEqual(body.privacyFeatures, ['tracker-detection', 'origin-tracing', 'block-recommendations']);
+  assert.deepEqual(body.privacyFeatures, ['tracker-detection', 'origin-tracing', 'block-recommendations', 'packet-sniffing', 'ui']);
+
+  await new Promise((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+});
+
+test('serves a simple privacy tracker dashboard', async () => {
+  const app = createApp({ apiToken: 'test-token' });
+  const server = app.createServer();
+  await new Promise((resolve) => server.listen(0, resolve));
+
+  const address = server.address();
+  const response = await fetch(`http://127.0.0.1:${address.port}/`);
+  const body = await response.text();
+
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get('content-type'), /text\/html/);
+  assert.match(body, /Privacy Tracker Dashboard/);
+  assert.match(body, /Analyze sniff capture/);
 
   await new Promise((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
 });
@@ -171,6 +188,73 @@ test('analyzes privacy reports, traces origin, and stores blocked entries', asyn
     statusBody.blocked.map((item) => item.target).sort(),
     ['.tracker.example', 'com.example.coupons'],
   );
+
+  await ctx.close();
+});
+
+test('analyzes sniff captures across radio transports', async () => {
+  const ctx = await startServer();
+
+  await fetch(`${ctx.baseUrl}/api/devices/register`, {
+    method: 'POST',
+    headers: ctx.headers,
+    body: JSON.stringify({ deviceId: 'iphone-sniff' }),
+  });
+
+  const sniffResponse = await fetch(`${ctx.baseUrl}/api/privacy/sniff`, {
+    method: 'POST',
+    headers: ctx.headers,
+    body: JSON.stringify({
+      deviceId: 'iphone-sniff',
+      autoBlock: true,
+      captures: [
+        {
+          channel: 'wifi',
+          remoteHost: 'ads.example',
+          protocol: 'https',
+          appName: 'Safari',
+          packetCount: 5,
+          bytes: 1024,
+        },
+        {
+          channel: 'cellular',
+          remoteHost: 'ads.example',
+          protocol: 'https',
+          appName: 'Safari',
+          packetCount: 8,
+          bytes: 2048,
+        },
+        {
+          channel: 'bluetooth',
+          advertiserId: 'beacon-123',
+          appBundleId: 'com.example.coupons',
+          appName: 'Coupons+',
+        },
+        {
+          channel: 'airdrop',
+          serviceUuid: 'drop-uuid',
+          appBundleId: 'com.example.coupons',
+          appName: 'Coupons+',
+        }
+      ],
+    }),
+  });
+  const sniffBody = await sniffResponse.json();
+
+  assert.equal(sniffResponse.status, 201);
+  assert.equal(sniffBody.summary.captures, 4);
+  assert.equal(sniffBody.summary.blockedRecommendations, 2);
+  assert.ok(sniffBody.findings.some((finding) => finding.category === 'cross-transport-tracker'));
+  assert.ok(sniffBody.findings.some((finding) => finding.category === 'proximity-tracker'));
+
+  const statusResponse = await fetch(`${ctx.baseUrl}/api/privacy/devices/iphone-sniff/status`, {
+    headers: { 'x-agent-token': 'test-token' },
+  });
+  const statusBody = await statusResponse.json();
+
+  assert.equal(statusResponse.status, 200);
+  assert.equal(statusBody.sniffReports.length, 1);
+  assert.equal(statusBody.blocked.length, 2);
 
   await ctx.close();
 });

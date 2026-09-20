@@ -1,0 +1,57 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "stargazers-log privacy and iPhone agent API",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/": {
+      "get": {
+        "summary": "Serve the privacy tracker dashboard"
+      }
+    },
+    "/api/devices/register": {
+      "post": {
+        "summary": "Register an iPhone client device"
+      }
+    },
+    "/api/agent/commands": {
+      "post": {
+        "summary": "Queue commands for a device"
+      }
+    },
+    "/api/devices/{deviceId}/commands/next": {
+      "get": {
+        "summary": "Poll the next queued command"
+      }
+    },
+    "/api/devices/{deviceId}/commands/{commandId}/result": {
+      "post": {
+        "summary": "Submit command execution results"
+      }
+    },
+    "/api/privacy/reports": {
+      "post": {
+        "summary": "Submit privacy observations such as cookies and app metadata"
+      }
+    },
+    "/api/privacy/sniff": {
+      "post": {
+        "summary": "Submit sniff captures from WiFi, cellular, Bluetooth, or AirDrop monitoring"
+      }
+    },
+    "/api/privacy/devices/{deviceId}/status": {
+      "get": {
+        "summary": "Read privacy reports, sniff reports, findings, and active blocks"
+      }
+    },
+    "/api/privacy/devices/{deviceId}/block": {
+      "get": {
+        "summary": "Export active blocks for client enforcement"
+      },
+      "post": {
+        "summary": "Manually store app and domain blocks"
+      }
+    }
+  }
+}
