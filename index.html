@@ -10,15 +10,15 @@
   <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,500;0,600;1,500&family=Outfit:wght@300;400;500&display=swap" rel="stylesheet">
   <style>
     :root {
-      --blush: #c48b8f;
-      --blush-deep: #a86f74;
-      --ink: #4a3538;
-      --ink-soft: #6e5559;
-      --mist: #f7ecec;
-      --petal: #f3ddd8;
-      --sage: #8fa390;
-      --cream: #fffaf8;
-      --line: rgba(74, 53, 56, 0.12);
+      --blush: #b87a7e;
+      --blush-deep: #966366;
+      --ink: #3f322f;
+      --ink-soft: #6a5752;
+      --mist: #f6efe9;
+      --petal: #edd9d0;
+      --sage: #7f9080;
+      --cream: #fffaf6;
+      --line: rgba(63, 50, 47, 0.12);
       --font-display: "Cormorant Garamond", Georgia, serif;
       --font-body: "Outfit", sans-serif;
     }
@@ -72,7 +72,7 @@
       width: 100%;
       height: 100%;
       object-fit: cover;
-      object-position: center 30%;
+      object-position: center 42%;
       transform: scale(1.06);
       animation: drift 18s ease-in-out infinite alternate;
     }
@@ -83,9 +83,9 @@
       background:
         linear-gradient(
           180deg,
-          rgba(74, 53, 56, 0.18) 0%,
-          rgba(74, 53, 56, 0.28) 38%,
-          rgba(74, 53, 56, 0.72) 100%
+          rgba(45, 32, 30, 0.22) 0%,
+          rgba(45, 32, 30, 0.35) 42%,
+          rgba(45, 32, 30, 0.78) 100%
         );
       z-index: 1;
     }
@@ -386,10 +386,10 @@
   <header class="hero">
     <div class="hero__media" aria-hidden="true">
       <img
-        src="https://images.unsplash.com/photo-1490750967868-88aa4486c68d?auto=format&fit=crop&w=1800&q=80"
+        src="assets/hero.jpg"
         alt=""
-        width="1800"
-        height="1200"
+        width="2000"
+        height="2000"
       >
       <div class="hero__veil"></div>
     </div>
@@ -425,7 +425,7 @@
       <div class="details" role="list">
         <div role="listitem">
           <span class="label">Data</span>
-          <span class="value">16 de junho</span>
+            <span class="value">16 de junho de 2027</span>
         </div>
         <div role="listitem">
           <span class="label">Horário</span>
@@ -494,7 +494,7 @@
 
   <script>
     (function () {
-      var dataEvento = new Date("2026-06-16T15:30:00").getTime();
+      var dataEvento = new Date("2027-06-16T15:30:00").getTime();
       var label = document.getElementById("countdown-label");
       var diasEl = document.getElementById("dias");
       var horasEl = document.getElementById("horas");
