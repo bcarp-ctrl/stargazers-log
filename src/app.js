@@ -568,7 +568,7 @@ function createApp({ apiToken = process.env.AGENT_API_TOKEN } = {}) {
         trimDeviceState(device);
 
         json(res, 200, {
-            deviceId,
+          deviceId,
           eventId: event.id,
           decision: event.decision,
           savedConnections: privacyState.savedConnections,
