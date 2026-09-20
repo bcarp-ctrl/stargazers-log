@@ -1,0 +1,21 @@
+{
+  "name": "stargazers-log",
+  "version": "1.0.0",
+  "description": "Minimal Node backend for a safe iPhone control agent",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test"
+  },
+  "repository": {
+    "type": "git",
+    "url": "http://localhost:26831/bcarp-ctrl/stargazers-log"
+  },
+  "author": "",
+  "license": "ISC",
+  "keywords": [
+    "iphone",
+    "agent",
+    "backend"
+  ]
+}
