@@ -29,6 +29,7 @@ function renderDashboardHtml() {
           <label>API token<input id="token" placeholder="Optional x-agent-token" /></label>
           <button id="loadStatus">Load privacy status</button>
           <button id="loadBlocks">Load blocklist export</button>
+          <button id="loadReview">Load review queue</button>
         </section>
         <section class="card">
           <h2>Submit sniff capture</h2>
@@ -54,6 +55,21 @@ function renderDashboardHtml() {
   ]
 }</textarea>
           <button id="submitSniff">Analyze sniff capture</button>
+        </section>
+        <section class="card">
+          <h2>Submit connection event</h2>
+          <textarea id="connectionPayload" rows="14">{
+  "deviceId": "iphone-1",
+  "connection": {
+    "transport": "wifi",
+    "remoteHost": "calendar-sync.example",
+    "appName": "Calendar",
+    "service": "caldav",
+    "dataTypes": ["calendar"],
+    "direction": "outbound"
+  }
+}</textarea>
+          <button id="submitConnection">Review connection</button>
         </section>
       </div>
       <section class="card" style="margin-top:16px;">
@@ -95,11 +111,25 @@ function renderDashboardHtml() {
         });
       });
 
+      document.getElementById('loadReview').addEventListener('click', async () => {
+        output.textContent = await callApi('/api/privacy/devices/' + encodeURIComponent(deviceId.value) + '/review', {
+          headers: headers(false),
+        });
+      });
+
       document.getElementById('submitSniff').addEventListener('click', async () => {
         output.textContent = await callApi('/api/privacy/sniff', {
           method: 'POST',
           headers: headers(true),
           body: document.getElementById('sniffPayload').value,
+        });
+      });
+
+      document.getElementById('submitConnection').addEventListener('click', async () => {
+        output.textContent = await callApi('/api/privacy/connections', {
+          method: 'POST',
+          headers: headers(true),
+          body: document.getElementById('connectionPayload').value,
         });
       });
     </script>

@@ -1,7 +1,14 @@
 const crypto = require('node:crypto');
 const http = require('node:http');
 const { normalizeActions, SUPPORTED_ACTIONS } = require('./actions');
-const { analyzePrivacyReport, analyzeSniffReport, ensureDevicePrivacyState, mergeBlockedItems } = require('./privacy');
+const {
+  analyzeConnectionEvent,
+  analyzePrivacyReport,
+  analyzeSniffReport,
+  ensureDevicePrivacyState,
+  mergeBlockedItems,
+  normalizeConnectionEvent,
+} = require('./privacy');
 const { renderDashboardHtml } = require('./ui');
 
 function createApp({ apiToken = process.env.AGENT_API_TOKEN } = {}) {
@@ -66,7 +73,7 @@ function createApp({ apiToken = process.env.AGENT_API_TOKEN } = {}) {
         json(res, 200, {
           status: 'ok',
           supportedActions: Object.keys(SUPPORTED_ACTIONS),
-          privacyFeatures: ['tracker-detection', 'origin-tracing', 'block-recommendations', 'packet-sniffing', 'ui'],
+          privacyFeatures: ['tracker-detection', 'origin-tracing', 'block-recommendations', 'packet-sniffing', 'connection-review', 'ui'],
         });
         return;
       }
@@ -105,54 +112,6 @@ function createApp({ apiToken = process.env.AGENT_API_TOKEN } = {}) {
           return;
         }
 
-        if (url.pathname === '/api/privacy/sniff' && req.method === 'POST') {
-          const body = await readJson(req);
-          const deviceId = String(body.deviceId || '').trim();
-
-          if (!deviceId) {
-            json(res, 400, { error: 'deviceId is required.' });
-            return;
-          }
-
-          const device = getDevice(deviceId);
-          if (!device) {
-            json(res, 404, { error: 'Device not registered.' });
-            return;
-          }
-
-          const privacyState = ensureDevicePrivacyState(device);
-          const analysis = analyzeSniffReport({ captures: body.captures });
-          const report = {
-            id: crypto.randomUUID(),
-            createdAt: new Date().toISOString(),
-            summary: analysis.summary,
-            captures: analysis.captures,
-            findings: analysis.findings,
-          };
-
-          privacyState.sniffReports.push(report);
-          privacyState.findings.push(...analysis.findings);
-          if (body.autoBlock) {
-            privacyState.blocked = mergeBlockedItems(
-              privacyState.blocked,
-              analysis.blockedRecommendations.map((item) => ({
-                ...item,
-                createdAt: new Date().toISOString(),
-              })),
-            );
-          }
-
-          json(res, 201, {
-            deviceId,
-            reportId: report.id,
-            summary: analysis.summary,
-            findings: analysis.findings,
-            blockedRecommendations: analysis.blockedRecommendations,
-            blocked: privacyState.blocked,
-          });
-          return;
-        }
-
         const device = getDevice(deviceId);
         if (!device) {
           json(res, 404, { error: 'Device not registered.' });
@@ -188,6 +147,117 @@ function createApp({ apiToken = process.env.AGENT_API_TOKEN } = {}) {
           findings: analysis.findings,
           blockedRecommendations: analysis.blockedRecommendations,
           blocked: privacyState.blocked,
+        });
+        return;
+      }
+
+      if (url.pathname === '/api/privacy/sniff' && req.method === 'POST') {
+        const body = await readJson(req);
+        const deviceId = String(body.deviceId || '').trim();
+
+        if (!deviceId) {
+          json(res, 400, { error: 'deviceId is required.' });
+          return;
+        }
+
+        const device = getDevice(deviceId);
+        if (!device) {
+          json(res, 404, { error: 'Device not registered.' });
+          return;
+        }
+
+        const privacyState = ensureDevicePrivacyState(device);
+        const analysis = analyzeSniffReport({ captures: body.captures });
+        const report = {
+          id: crypto.randomUUID(),
+          createdAt: new Date().toISOString(),
+          summary: analysis.summary,
+          captures: analysis.captures,
+          findings: analysis.findings,
+        };
+
+        privacyState.sniffReports.push(report);
+        privacyState.findings.push(...analysis.findings);
+        if (body.autoBlock) {
+          privacyState.blocked = mergeBlockedItems(
+            privacyState.blocked,
+            analysis.blockedRecommendations.map((item) => ({
+              ...item,
+              createdAt: new Date().toISOString(),
+            })),
+          );
+        }
+
+        json(res, 201, {
+          deviceId,
+          reportId: report.id,
+          summary: analysis.summary,
+          findings: analysis.findings,
+          blockedRecommendations: analysis.blockedRecommendations,
+          blocked: privacyState.blocked,
+        });
+        return;
+      }
+
+      if (url.pathname === '/api/privacy/connections' && req.method === 'POST') {
+        const body = await readJson(req);
+        const deviceId = String(body.deviceId || '').trim();
+
+        if (!deviceId) {
+          json(res, 400, { error: 'deviceId is required.' });
+          return;
+        }
+
+        const device = getDevice(deviceId);
+        if (!device) {
+          json(res, 404, { error: 'Device not registered.' });
+          return;
+        }
+
+        const privacyState = ensureDevicePrivacyState(device);
+        const connection = normalizeConnectionEvent(body.connection);
+        const analysis = analyzeConnectionEvent(connection);
+        const blockedMatch = privacyState.blocked.find((item) =>
+          (item.type === 'domain' && item.target === connection.remoteHost)
+          || (item.type === 'app' && item.target === connection.appBundleId),
+        );
+        const savedMatch = privacyState.savedConnections.find((item) => item.policyKey === analysis.policyKey);
+
+        let decision = 'prompt';
+        let decisionSource = 'review';
+        if (blockedMatch) {
+          decision = 'deny';
+          decisionSource = 'blocklist';
+        } else if (savedMatch) {
+          decision = savedMatch.decision;
+          decisionSource = 'saved';
+        }
+
+        const event = {
+          id: connection.id,
+          createdAt: new Date().toISOString(),
+          connection,
+          findings: analysis.findings,
+          policyKey: analysis.policyKey,
+          decision,
+          decisionSource,
+        };
+
+        privacyState.connections.push(event);
+        privacyState.findings.push(...analysis.findings);
+        if (decision === 'prompt') {
+          privacyState.reviewQueue.push(event);
+        }
+
+        json(res, 201, {
+          deviceId,
+          eventId: event.id,
+          decision,
+          decisionSource,
+          promptRequired: decision === 'prompt',
+          findings: analysis.findings,
+          blockedRecommendations: analysis.blockedRecommendations,
+          connection: event.connection,
         });
         return;
       }
@@ -306,7 +376,88 @@ function createApp({ apiToken = process.env.AGENT_API_TOKEN } = {}) {
           deviceId,
           reports: privacyState.reports,
           sniffReports: privacyState.sniffReports,
+          connections: privacyState.connections,
+          reviewQueue: privacyState.reviewQueue,
+          savedConnections: privacyState.savedConnections,
           findings: privacyState.findings,
+          blocked: privacyState.blocked,
+        });
+        return;
+      }
+
+      const privacyReviewMatch = url.pathname.match(/^\/api\/privacy\/devices\/([^/]+)\/review$/);
+      if (privacyReviewMatch && req.method === 'GET') {
+        const deviceId = decodeURIComponent(privacyReviewMatch[1]);
+        const device = getDevice(deviceId);
+        if (!device) {
+          json(res, 404, { error: 'Device not registered.' });
+          return;
+        }
+
+        const privacyState = ensureDevicePrivacyState(device);
+        json(res, 200, {
+          deviceId,
+          pending: privacyState.reviewQueue,
+        });
+        return;
+      }
+
+      const privacyReviewDecisionMatch = url.pathname.match(/^\/api\/privacy\/devices\/([^/]+)\/review\/([^/]+)$/);
+      if (privacyReviewDecisionMatch && req.method === 'POST') {
+        const deviceId = decodeURIComponent(privacyReviewDecisionMatch[1]);
+        const eventId = decodeURIComponent(privacyReviewDecisionMatch[2]);
+        const device = getDevice(deviceId);
+        if (!device) {
+          json(res, 404, { error: 'Device not registered.' });
+          return;
+        }
+
+        const privacyState = ensureDevicePrivacyState(device);
+        const event = privacyState.connections.find((item) => item.id === eventId);
+        if (!event) {
+          json(res, 404, { error: 'Connection event not found.' });
+          return;
+        }
+
+        const body = await readJson(req);
+        const decision = String(body.decision || '').trim().toLowerCase();
+        if (!['allow', 'deny'].includes(decision)) {
+          json(res, 400, { error: 'decision must be allow or deny.' });
+          return;
+        }
+
+        event.decision = decision;
+        event.decisionSource = 'manual';
+        privacyState.reviewQueue = privacyState.reviewQueue.filter((item) => item.id !== event.id);
+
+        if (body.remember) {
+          privacyState.savedConnections = [
+            ...privacyState.savedConnections.filter((item) => item.policyKey !== event.policyKey),
+            {
+              policyKey: event.policyKey,
+              decision,
+              label: event.connection.remoteHost || event.connection.remoteDeviceName || event.connection.appName || event.connection.service || event.connection.transport,
+              createdAt: new Date().toISOString(),
+            },
+          ];
+        }
+
+        if (decision === 'deny') {
+          const denyBlocks = event.findings
+            .filter((finding) => finding.block)
+            .map((finding) => ({
+              ...finding.block,
+              reason: finding.reason,
+              createdAt: new Date().toISOString(),
+            }));
+          privacyState.blocked = mergeBlockedItems(privacyState.blocked, denyBlocks);
+        }
+
+        json(res, 200, {
+          deviceId,
+          eventId: event.id,
+          decision: event.decision,
+          savedConnections: privacyState.savedConnections,
           blocked: privacyState.blocked,
         });
         return;

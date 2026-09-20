@@ -40,9 +40,24 @@
         "summary": "Submit sniff captures from WiFi, cellular, Bluetooth, or AirDrop monitoring"
       }
     },
+    "/api/privacy/connections": {
+      "post": {
+        "summary": "Submit a connection event for allow or deny review"
+      }
+    },
     "/api/privacy/devices/{deviceId}/status": {
       "get": {
         "summary": "Read privacy reports, sniff reports, findings, and active blocks"
+      }
+    },
+    "/api/privacy/devices/{deviceId}/review": {
+      "get": {
+        "summary": "List connections pending user review"
+      }
+    },
+    "/api/privacy/devices/{deviceId}/review/{eventId}": {
+      "post": {
+        "summary": "Allow or deny a connection and optionally save the decision"
       }
     },
     "/api/privacy/devices/{deviceId}/block": {

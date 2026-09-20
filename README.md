@@ -17,6 +17,8 @@ Privacy tracker features:
 - trace suspicious origins back to the reporting app or domain
 - recommend and store domain/app blocks per device
 - inspect sniffed traffic summaries across WiFi, cellular, Bluetooth, and AirDrop
+- queue new connections for allow/deny review with optional saved decisions
+- flag sensitive egress such as calendar data leaving the device
 - serve a simple built-in dashboard for reviewing findings and blocklists
 
 ## API flow
@@ -31,10 +33,11 @@ Privacy flow:
 
 1. Submit device observations to `POST /api/privacy/reports`
 2. Submit sniff captures to `POST /api/privacy/sniff`
-3. Review findings and traced origins from the responses
-4. Let the backend auto-block recommendations or submit manual blocks to `POST /api/privacy/devices/:deviceId/block`
-5. Export the active blocklist from `GET /api/privacy/devices/:deviceId/block`
-6. Read current privacy status from `GET /api/privacy/devices/:deviceId/status`
+3. Submit connection events to `POST /api/privacy/connections`
+4. Review pending allow/deny prompts from `GET /api/privacy/devices/:deviceId/review`
+5. Save manual decisions with `POST /api/privacy/devices/:deviceId/review/:eventId`
+6. Export the active blocklist from `GET /api/privacy/devices/:deviceId/block`
+7. Read current privacy status from `GET /api/privacy/devices/:deviceId/status`
 
 ## Run
 
@@ -53,6 +56,7 @@ Open `http://localhost:3000/` for a simple dashboard that can:
 - fetch device privacy status
 - fetch the exported blocklist
 - submit sniff capture JSON for analysis
+- submit connection events for review
 
 ## Example requests
 
@@ -141,6 +145,25 @@ curl -X POST http://localhost:3000/api/privacy/sniff \
   }'
 ```
 
+Submit a connection event for review:
+
+```bash
+curl -X POST http://localhost:3000/api/privacy/connections \
+  -H 'x-agent-token: your-token' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "deviceId":"iphone-1",
+    "connection":{
+      "transport":"wifi",
+      "remoteHost":"calendar-sync.example",
+      "appName":"Calendar",
+      "service":"caldav",
+      "dataTypes":["calendar"],
+      "direction":"outbound"
+    }
+  }'
+```
+
 Export the current device blocklist:
 
 ```bash
@@ -158,6 +181,7 @@ Minimum client flow:
 4. post privacy observations to `POST /api/privacy/reports`
 5. fetch the enforceable blocklist from `GET /api/privacy/devices/:deviceId/block`
 6. optionally post sniff captures to `POST /api/privacy/sniff`
+7. optionally post connection events to `POST /api/privacy/connections`
 
 Core request and response shapes:
 
@@ -247,6 +271,14 @@ On iPhone, a Shortcut or app can:
 3. inspect the returned `blockedRecommendations`
 4. send selected blocks to `/api/privacy/devices/:deviceId/block`
 5. fetch `/api/privacy/devices/:deviceId/block` and enforce that blocklist locally
+6. send connection attempts to `/api/privacy/connections`, then wait for allow/deny review results
+
+## Connection review model
+
+- New connections are recorded with transport, target, service, app, and requested data types.
+- The backend only stores metadata needed for review; it does not attempt arbitrary harvesting from remote devices.
+- Unknown connections return `promptRequired: true` so a client can ask you to allow or deny.
+- Manual decisions can be remembered and reused for later matching connections.
 
 ## OpenAPI-style contract
 

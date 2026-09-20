@@ -5,6 +5,9 @@ function ensureDevicePrivacyState(device) {
     device.privacy = {
       reports: [],
       sniffReports: [],
+      connections: [],
+      reviewQueue: [],
+      savedConnections: [],
       findings: [],
       blocked: [],
     };
@@ -383,9 +386,142 @@ function analyzeSniffReport(report) {
   };
 }
 
+function normalizeConnectionEvent(connection) {
+  if (!connection || typeof connection !== 'object') {
+    throw new Error('Connection event must be an object.');
+  }
+
+  const transport = String(connection.transport || '').trim().toLowerCase();
+  if (!['wifi', 'cellular', 'bluetooth', 'airdrop'].includes(transport)) {
+    throw new Error('Connection transport must be wifi, cellular, bluetooth, or airdrop.');
+  }
+
+  const dataTypes = Array.isArray(connection.dataTypes)
+    ? connection.dataTypes.map((value) => String(value || '').trim().toLowerCase()).filter(Boolean)
+    : [];
+
+  return {
+    id: crypto.randomUUID(),
+    transport,
+    remoteDeviceName: String(connection.remoteDeviceName || '').trim(),
+    remoteDeviceId: String(connection.remoteDeviceId || '').trim().toLowerCase(),
+    remoteHost: String(connection.remoteHost || '').trim().toLowerCase(),
+    appName: String(connection.appName || '').trim(),
+    appBundleId: String(connection.appBundleId || '').trim(),
+    service: String(connection.service || '').trim().toLowerCase(),
+    direction: String(connection.direction || 'outbound').trim().toLowerCase(),
+    dataTypes,
+    notes: String(connection.notes || '').trim(),
+  };
+}
+
+function policyKeyForConnection(connection) {
+  return [
+    connection.transport,
+    connection.remoteHost || connection.remoteDeviceId || connection.appBundleId || connection.service || 'unknown',
+  ].join(':');
+}
+
+function analyzeConnectionEvent(connection) {
+  const findings = [];
+  const sensitiveDataTypes = ['calendar', 'contacts', 'photos', 'location', 'messages'];
+
+  if (connection.remoteHost && keywordTrackerMatch(connection.remoteHost)) {
+    findings.push({
+      id: crypto.randomUUID(),
+      kind: 'connection',
+      name: connection.remoteHost,
+      category: 'tracker-connection',
+      severity: 'medium',
+      reason: `Connection target resembles a tracking endpoint over ${connection.transport}.`,
+      origin: {
+        type: 'domain',
+        value: connection.remoteHost,
+        sourceApp: connection.appName || connection.appBundleId || null,
+        channel: connection.transport,
+      },
+      block: {
+        type: 'domain',
+        target: connection.remoteHost,
+      },
+    });
+  }
+
+  if (connection.dataTypes.some((dataType) => sensitiveDataTypes.includes(dataType))) {
+    findings.push({
+      id: crypto.randomUUID(),
+      kind: 'connection',
+      name: connection.remoteHost || connection.remoteDeviceName || connection.service || connection.transport,
+      category: 'sensitive-data-egress',
+      severity: 'high',
+      reason: `Connection may expose sensitive data: ${connection.dataTypes.join(', ')}.`,
+      origin: {
+        type: connection.remoteHost ? 'domain' : 'device',
+        value: connection.remoteHost || connection.remoteDeviceId || connection.remoteDeviceName || connection.service,
+        sourceApp: connection.appName || connection.appBundleId || null,
+        channel: connection.transport,
+      },
+      block: connection.appBundleId
+        ? {
+          type: 'app',
+          target: connection.appBundleId,
+        }
+        : connection.remoteHost
+          ? {
+            type: 'domain',
+            target: connection.remoteHost,
+          }
+          : null,
+    });
+  }
+
+  if (['bluetooth', 'airdrop'].includes(connection.transport) && (connection.remoteDeviceId || connection.remoteDeviceName)) {
+    findings.push({
+      id: crypto.randomUUID(),
+      kind: 'connection',
+      name: connection.remoteDeviceName || connection.remoteDeviceId,
+      category: 'nearby-device-connection',
+      severity: 'medium',
+      reason: `Nearby device connection observed over ${connection.transport}.`,
+      origin: {
+        type: 'device',
+        value: connection.remoteDeviceId || connection.remoteDeviceName,
+        sourceApp: connection.appName || connection.appBundleId || null,
+        channel: connection.transport,
+      },
+      block: connection.appBundleId
+        ? {
+          type: 'app',
+          target: connection.appBundleId,
+        }
+        : null,
+    });
+  }
+
+  const blockedRecommendations = dedupeBlockedItems(
+    findings
+      .filter((finding) => finding.block)
+      .map((finding) => ({
+        ...finding.block,
+        reason: finding.reason,
+        findingId: finding.id,
+      })),
+  );
+
+  return {
+    connection,
+    findings,
+    blockedRecommendations,
+    policyKey: policyKeyForConnection(connection),
+  };
+}
+
 module.exports = {
   analyzePrivacyReport,
+  analyzeConnectionEvent,
   analyzeSniffReport,
   ensureDevicePrivacyState,
+  normalizeConnectionEvent,
+  policyKeyForConnection,
   mergeBlockedItems,
 };

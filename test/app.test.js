@@ -36,7 +36,7 @@ test('health endpoint reports supported actions', async () => {
 
   assert.equal(response.status, 200);
   assert.deepEqual(body.supportedActions, ['open_app', 'open_url', 'send_text', 'run_shortcut']);
-  assert.deepEqual(body.privacyFeatures, ['tracker-detection', 'origin-tracing', 'block-recommendations', 'packet-sniffing', 'ui']);
+  assert.deepEqual(body.privacyFeatures, ['tracker-detection', 'origin-tracing', 'block-recommendations', 'packet-sniffing', 'connection-review', 'ui']);
 
   await new Promise((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
 });
@@ -54,6 +54,7 @@ test('serves a simple privacy tracker dashboard', async () => {
   assert.match(response.headers.get('content-type'), /text\/html/);
   assert.match(body, /Privacy Tracker Dashboard/);
   assert.match(body, /Analyze sniff capture/);
+  assert.match(body, /Review connection/);
 
   await new Promise((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
 });
@@ -255,6 +256,83 @@ test('analyzes sniff captures across radio transports', async () => {
   assert.equal(statusResponse.status, 200);
   assert.equal(statusBody.sniffReports.length, 1);
   assert.equal(statusBody.blocked.length, 2);
+
+  await ctx.close();
+});
+
+test('queues connection review prompts and saves allow or deny decisions', async () => {
+  const ctx = await startServer();
+
+  await fetch(`${ctx.baseUrl}/api/devices/register`, {
+    method: 'POST',
+    headers: ctx.headers,
+    body: JSON.stringify({ deviceId: 'iphone-review' }),
+  });
+
+  const connectionResponse = await fetch(`${ctx.baseUrl}/api/privacy/connections`, {
+    method: 'POST',
+    headers: ctx.headers,
+    body: JSON.stringify({
+      deviceId: 'iphone-review',
+      connection: {
+        transport: 'wifi',
+        remoteHost: 'calendar-sync.example',
+        appName: 'Calendar',
+        service: 'caldav',
+        dataTypes: ['calendar'],
+        direction: 'outbound',
+      },
+    }),
+  });
+  const connectionBody = await connectionResponse.json();
+
+  assert.equal(connectionResponse.status, 201);
+  assert.equal(connectionBody.promptRequired, true);
+  assert.ok(connectionBody.findings.some((finding) => finding.category === 'sensitive-data-egress'));
+
+  const reviewResponse = await fetch(`${ctx.baseUrl}/api/privacy/devices/iphone-review/review`, {
+    headers: { 'x-agent-token': 'test-token' },
+  });
+  const reviewBody = await reviewResponse.json();
+
+  assert.equal(reviewResponse.status, 200);
+  assert.equal(reviewBody.pending.length, 1);
+
+  const decisionResponse = await fetch(`${ctx.baseUrl}/api/privacy/devices/iphone-review/review/${connectionBody.eventId}`, {
+    method: 'POST',
+    headers: ctx.headers,
+    body: JSON.stringify({
+      decision: 'deny',
+      remember: true,
+    }),
+  });
+  const decisionBody = await decisionResponse.json();
+
+  assert.equal(decisionResponse.status, 200);
+  assert.equal(decisionBody.decision, 'deny');
+  assert.equal(decisionBody.savedConnections.length, 1);
+  assert.equal(decisionBody.blocked.length, 1);
+
+  const autoDecisionResponse = await fetch(`${ctx.baseUrl}/api/privacy/connections`, {
+    method: 'POST',
+    headers: ctx.headers,
+    body: JSON.stringify({
+      deviceId: 'iphone-review',
+      connection: {
+        transport: 'wifi',
+        remoteHost: 'calendar-sync.example',
+        appName: 'Calendar',
+        service: 'caldav',
+        dataTypes: ['calendar'],
+        direction: 'outbound',
+      },
+    }),
+  });
+  const autoDecisionBody = await autoDecisionResponse.json();
+
+  assert.equal(autoDecisionResponse.status, 201);
+  assert.equal(autoDecisionBody.decision, 'deny');
+  assert.equal(autoDecisionBody.decisionSource, 'blocklist');
 
   await ctx.close();
 });
