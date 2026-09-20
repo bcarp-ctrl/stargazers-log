@@ -36,6 +36,7 @@ test('health endpoint reports supported actions', async () => {
 
   assert.equal(response.status, 200);
   assert.deepEqual(body.supportedActions, ['open_app', 'open_url', 'send_text', 'run_shortcut']);
+  assert.deepEqual(body.privacyFeatures, ['tracker-detection', 'origin-tracing', 'block-recommendations']);
 
   await new Promise((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
 });
@@ -112,6 +113,91 @@ test('rejects unsupported actions', async () => {
 
   assert.equal(response.status, 400);
   assert.match(body.error, /Unsupported action type/);
+
+  await ctx.close();
+});
+
+test('analyzes privacy reports, traces origin, and stores blocked entries', async () => {
+  const ctx = await startServer();
+
+  await fetch(`${ctx.baseUrl}/api/devices/register`, {
+    method: 'POST',
+    headers: ctx.headers,
+    body: JSON.stringify({ deviceId: 'iphone-privacy' }),
+  });
+
+  const reportResponse = await fetch(`${ctx.baseUrl}/api/privacy/reports`, {
+    method: 'POST',
+    headers: ctx.headers,
+    body: JSON.stringify({
+      deviceId: 'iphone-privacy',
+      autoBlock: true,
+      observations: [
+        {
+          kind: 'cookie',
+          name: 'ever-id',
+          domain: '.tracker.example',
+          maxAgeDays: 730,
+          sameSite: 'none',
+          partitioned: false,
+          sourceApp: 'Safari',
+        },
+        {
+          kind: 'app',
+          name: 'Coupons+',
+          bundleId: 'com.example.coupons',
+          domains: ['ads.example', 'metrics.example', 'sync.example'],
+          permissions: ['tracking'],
+        },
+      ],
+    }),
+  });
+  const reportBody = await reportResponse.json();
+
+  assert.equal(reportResponse.status, 201);
+  assert.equal(reportBody.summary.findings, 5);
+  assert.equal(reportBody.blockedRecommendations.length, 2);
+  assert.equal(reportBody.findings[0].origin.value, '.tracker.example');
+
+  const statusResponse = await fetch(`${ctx.baseUrl}/api/privacy/devices/iphone-privacy/status`, {
+    headers: { 'x-agent-token': 'test-token' },
+  });
+  const statusBody = await statusResponse.json();
+
+  assert.equal(statusResponse.status, 200);
+  assert.equal(statusBody.reports.length, 1);
+  assert.equal(statusBody.blocked.length, 2);
+  assert.deepEqual(
+    statusBody.blocked.map((item) => item.target).sort(),
+    ['.tracker.example', 'com.example.coupons'],
+  );
+
+  await ctx.close();
+});
+
+test('accepts manual block entries for traced origins', async () => {
+  const ctx = await startServer();
+
+  await fetch(`${ctx.baseUrl}/api/devices/register`, {
+    method: 'POST',
+    headers: ctx.headers,
+    body: JSON.stringify({ deviceId: 'iphone-block' }),
+  });
+
+  const blockResponse = await fetch(`${ctx.baseUrl}/api/privacy/devices/iphone-block/block`, {
+    method: 'POST',
+    headers: ctx.headers,
+    body: JSON.stringify({
+      items: [
+        { type: 'domain', target: 'ads.example', reason: 'Known ad origin' },
+        { type: 'app', target: 'com.example.data-broker', reason: 'Data broker app' },
+      ],
+    }),
+  });
+  const blockBody = await blockResponse.json();
+
+  assert.equal(blockResponse.status, 200);
+  assert.equal(blockBody.blocked.length, 2);
 
   await ctx.close();
 });
