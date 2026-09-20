@@ -13,7 +13,6 @@ const { renderDashboardHtml } = require('./ui');
 
 function createApp({ apiToken = process.env.AGENT_API_TOKEN } = {}) {
   const MAX_DEVICES = 200;
-  const MAX_RESULTS = 1000;
   const MAX_COMMANDS_PER_DEVICE = 500;
   const MAX_REPORTS_PER_DEVICE = 200;
   const MAX_SNIFF_REPORTS_PER_DEVICE = 200;
@@ -47,17 +46,26 @@ function createApp({ apiToken = process.env.AGENT_API_TOKEN } = {}) {
     trimArray(privacyState.savedConnections, MAX_SAVED_CONNECTIONS_PER_DEVICE);
     trimArray(privacyState.findings, MAX_FINDINGS_PER_DEVICE);
     trimArray(privacyState.blocked, MAX_BLOCKED_ITEMS_PER_DEVICE);
+
+    const activeCommandIds = new Set(device.queue.map((command) => command.id));
+    for (const [commandId, result] of results.entries()) {
+      if (result.deviceId === device.id && !activeCommandIds.has(commandId)) {
+        results.delete(commandId);
+      }
+    }
   }
 
   function trimGlobalState() {
     while (devices.size > MAX_DEVICES) {
       const firstKey = devices.keys().next().value;
+      const evictedDevice = devices.get(firstKey);
       devices.delete(firstKey);
-    }
 
-    while (results.size > MAX_RESULTS) {
-      const firstKey = results.keys().next().value;
-      results.delete(firstKey);
+      if (evictedDevice) {
+        for (const command of evictedDevice.queue || []) {
+          results.delete(command.id);
+        }
+      }
     }
   }
 
