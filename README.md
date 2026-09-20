@@ -1,3 +1,3 @@
-# Chá da Luz Maria
+# Luz Maria’s Baby Shower
 
-Convite digital para o chá de bebê da Luz Maria.
+Digital invitation for Luz Maria’s baby shower.
