@@ -257,6 +257,24 @@ function createApp({ apiToken = process.env.AGENT_API_TOKEN } = {}) {
       }
 
       const privacyBlockMatch = url.pathname.match(/^\/api\/privacy\/devices\/([^/]+)\/block$/);
+      if (privacyBlockMatch && req.method === 'GET') {
+        const deviceId = decodeURIComponent(privacyBlockMatch[1]);
+        const device = getDevice(deviceId);
+        if (!device) {
+          json(res, 404, { error: 'Device not registered.' });
+          return;
+        }
+
+        const privacyState = ensureDevicePrivacyState(device);
+        json(res, 200, {
+          deviceId,
+          exportedAt: new Date().toISOString(),
+          blockCount: privacyState.blocked.length,
+          blocked: privacyState.blocked,
+        });
+        return;
+      }
+
       if (privacyBlockMatch && req.method === 'POST') {
         const deviceId = decodeURIComponent(privacyBlockMatch[1]);
         const device = getDevice(deviceId);

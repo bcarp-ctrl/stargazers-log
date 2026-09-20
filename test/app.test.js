@@ -199,5 +199,17 @@ test('accepts manual block entries for traced origins', async () => {
   assert.equal(blockResponse.status, 200);
   assert.equal(blockBody.blocked.length, 2);
 
+  const exportResponse = await fetch(`${ctx.baseUrl}/api/privacy/devices/iphone-block/block`, {
+    headers: { 'x-agent-token': 'test-token' },
+  });
+  const exportBody = await exportResponse.json();
+
+  assert.equal(exportResponse.status, 200);
+  assert.equal(exportBody.blockCount, 2);
+  assert.deepEqual(
+    exportBody.blocked.map((item) => item.target).sort(),
+    ['ads.example', 'com.example.data-broker'],
+  );
+
   await ctx.close();
 });
