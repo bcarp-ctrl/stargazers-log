@@ -455,13 +455,13 @@ function createApp({ apiToken = process.env.AGENT_API_TOKEN } = {}) {
       const statusMatch = url.pathname.match(/^\/api\/agent\/commands\/([^/]+)$/);
       if (statusMatch && req.method === 'GET') {
         const commandId = decodeURIComponent(statusMatch[1]);
-        const result = results.get(commandId);
-        if (!result) {
+        const commandResult = results.get(commandId);
+        if (!commandResult) {
           json(res, 404, { error: 'Command result not found.' });
           return;
         }
 
-        json(res, 200, result);
+        json(res, 200, commandResult);
         return;
       }
 

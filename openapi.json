@@ -45,11 +45,6 @@
     "/api/agent/commands": {
       "post": {
         "summary": "Queue commands for a device",
-        "security": [
-          {
-            "agentToken": []
-          }
-        ],
         "responses": {
           "201": {
             "description": "Commands were queued."
@@ -63,11 +58,6 @@
     "/api/agent/commands/{commandId}": {
       "get": {
         "summary": "Read status/result for a command",
-        "security": [
-          {
-            "agentToken": []
-          }
-        ],
         "responses": {
           "200": {
             "description": "Command status or result payload."
