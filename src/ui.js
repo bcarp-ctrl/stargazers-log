@@ -113,21 +113,18 @@ function renderDashboardHtml() {
       });
 
       document.getElementById('loadStatus').addEventListener('click', async () => {
-        await registerDevice();
         output.textContent = await callApi('/api/privacy/devices/' + encodeURIComponent(deviceId.value) + '/status', {
           headers: headers(false),
         });
       });
 
       document.getElementById('loadBlocks').addEventListener('click', async () => {
-        await registerDevice();
         output.textContent = await callApi('/api/privacy/devices/' + encodeURIComponent(deviceId.value) + '/block', {
           headers: headers(false),
         });
       });
 
       document.getElementById('loadReview').addEventListener('click', async () => {
-        await registerDevice();
         output.textContent = await callApi('/api/privacy/devices/' + encodeURIComponent(deviceId.value) + '/review', {
           headers: headers(false),
         });
