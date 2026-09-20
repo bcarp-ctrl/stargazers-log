@@ -12,8 +12,66 @@ const {
 const { renderDashboardHtml } = require('./ui');
 
 function createApp({ apiToken = process.env.AGENT_API_TOKEN } = {}) {
+  const MAX_DEVICES = 200;
+  const MAX_RESULTS = 1000;
+  const MAX_COMMANDS_PER_DEVICE = 500;
+  const MAX_REPORTS_PER_DEVICE = 200;
+  const MAX_SNIFF_REPORTS_PER_DEVICE = 200;
+  const MAX_CONNECTIONS_PER_DEVICE = 500;
+  const MAX_REVIEW_QUEUE_PER_DEVICE = 200;
+  const MAX_SAVED_CONNECTIONS_PER_DEVICE = 500;
+  const MAX_FINDINGS_PER_DEVICE = 5000;
+  const MAX_BLOCKED_ITEMS_PER_DEVICE = 1000;
   const devices = new Map();
   const results = new Map();
+
+  function createBadRequestError(message) {
+    const error = new Error(message);
+    error.statusCode = 400;
+    return error;
+  }
+
+  function trimArray(items, maxItems) {
+    if (items.length > maxItems) {
+      items.splice(0, items.length - maxItems);
+    }
+  }
+
+  function trimDeviceState(device) {
+    const privacyState = ensureDevicePrivacyState(device);
+    trimArray(device.queue, MAX_COMMANDS_PER_DEVICE);
+    trimArray(privacyState.reports, MAX_REPORTS_PER_DEVICE);
+    trimArray(privacyState.sniffReports, MAX_SNIFF_REPORTS_PER_DEVICE);
+    trimArray(privacyState.connections, MAX_CONNECTIONS_PER_DEVICE);
+    trimArray(privacyState.reviewQueue, MAX_REVIEW_QUEUE_PER_DEVICE);
+    trimArray(privacyState.savedConnections, MAX_SAVED_CONNECTIONS_PER_DEVICE);
+    trimArray(privacyState.findings, MAX_FINDINGS_PER_DEVICE);
+    trimArray(privacyState.blocked, MAX_BLOCKED_ITEMS_PER_DEVICE);
+  }
+
+  function trimGlobalState() {
+    while (devices.size > MAX_DEVICES) {
+      const firstKey = devices.keys().next().value;
+      devices.delete(firstKey);
+    }
+
+    while (results.size > MAX_RESULTS) {
+      const firstKey = results.keys().next().value;
+      results.delete(firstKey);
+    }
+  }
+
+  function parseStrictBoolean(value, fieldName) {
+    if (value === undefined) {
+      return false;
+    }
+
+    if (typeof value !== 'boolean') {
+      throw createBadRequestError(`${fieldName} must be a boolean.`);
+    }
+
+    return value;
+  }
 
   function getDevice(deviceId) {
     return devices.get(deviceId);
@@ -39,7 +97,7 @@ function createApp({ apiToken = process.env.AGENT_API_TOKEN } = {}) {
       req.on('data', (chunk) => {
         body += chunk;
         if (body.length > 1024 * 1024) {
-          reject(new Error('Request body is too large.'));
+          reject(createBadRequestError('Request body is too large.'));
           req.destroy();
         }
       });
@@ -52,7 +110,7 @@ function createApp({ apiToken = process.env.AGENT_API_TOKEN } = {}) {
         try {
           resolve(JSON.parse(body));
         } catch {
-          reject(new Error('Request body must be valid JSON.'));
+          reject(createBadRequestError('Request body must be valid JSON.'));
         }
       });
       req.on('error', reject);
@@ -99,6 +157,8 @@ function createApp({ apiToken = process.env.AGENT_API_TOKEN } = {}) {
         device.updatedAt = new Date().toISOString();
         ensureDevicePrivacyState(device);
         devices.set(deviceId, device);
+        trimDeviceState(device);
+        trimGlobalState();
         json(res, 201, { deviceId: device.id, name: device.name, updatedAt: device.updatedAt });
         return;
       }
@@ -119,7 +179,13 @@ function createApp({ apiToken = process.env.AGENT_API_TOKEN } = {}) {
         }
 
         const privacyState = ensureDevicePrivacyState(device);
-        const analysis = analyzePrivacyReport({ observations: body.observations });
+        const autoBlock = parseStrictBoolean(body.autoBlock, 'autoBlock');
+        let analysis;
+        try {
+          analysis = analyzePrivacyReport({ observations: body.observations });
+        } catch (error) {
+          throw createBadRequestError(error.message);
+        }
         const report = {
           id: crypto.randomUUID(),
           createdAt: new Date().toISOString(),
@@ -130,7 +196,7 @@ function createApp({ apiToken = process.env.AGENT_API_TOKEN } = {}) {
 
         privacyState.reports.push(report);
         privacyState.findings.push(...analysis.findings);
-        if (body.autoBlock) {
+        if (autoBlock) {
           privacyState.blocked = mergeBlockedItems(
             privacyState.blocked,
             analysis.blockedRecommendations.map((item) => ({
@@ -139,6 +205,7 @@ function createApp({ apiToken = process.env.AGENT_API_TOKEN } = {}) {
             })),
           );
         }
+        trimDeviceState(device);
 
         json(res, 201, {
           deviceId,
@@ -167,7 +234,13 @@ function createApp({ apiToken = process.env.AGENT_API_TOKEN } = {}) {
         }
 
         const privacyState = ensureDevicePrivacyState(device);
-        const analysis = analyzeSniffReport({ captures: body.captures });
+        const autoBlock = parseStrictBoolean(body.autoBlock, 'autoBlock');
+        let analysis;
+        try {
+          analysis = analyzeSniffReport({ captures: body.captures });
+        } catch (error) {
+          throw createBadRequestError(error.message);
+        }
         const report = {
           id: crypto.randomUUID(),
           createdAt: new Date().toISOString(),
@@ -178,7 +251,7 @@ function createApp({ apiToken = process.env.AGENT_API_TOKEN } = {}) {
 
         privacyState.sniffReports.push(report);
         privacyState.findings.push(...analysis.findings);
-        if (body.autoBlock) {
+        if (autoBlock) {
           privacyState.blocked = mergeBlockedItems(
             privacyState.blocked,
             analysis.blockedRecommendations.map((item) => ({
@@ -187,6 +260,7 @@ function createApp({ apiToken = process.env.AGENT_API_TOKEN } = {}) {
             })),
           );
         }
+        trimDeviceState(device);
 
         json(res, 201, {
           deviceId,
@@ -215,13 +289,20 @@ function createApp({ apiToken = process.env.AGENT_API_TOKEN } = {}) {
         }
 
         const privacyState = ensureDevicePrivacyState(device);
-        const connection = normalizeConnectionEvent(body.connection);
+        let connection;
+        try {
+          connection = normalizeConnectionEvent(body.connection);
+        } catch (error) {
+          throw createBadRequestError(error.message);
+        }
         const analysis = analyzeConnectionEvent(connection);
         const blockedMatch = privacyState.blocked.find((item) =>
           (item.type === 'domain' && item.target === connection.remoteHost)
           || (item.type === 'app' && item.target === connection.appBundleId),
         );
-        const savedMatch = privacyState.savedConnections.find((item) => item.policyKey === analysis.policyKey);
+        const savedMatch = analysis.policyKey
+          ? privacyState.savedConnections.find((item) => item.policyKey === analysis.policyKey)
+          : null;
 
         let decision = 'prompt';
         let decisionSource = 'review';
@@ -248,6 +329,7 @@ function createApp({ apiToken = process.env.AGENT_API_TOKEN } = {}) {
         if (decision === 'prompt') {
           privacyState.reviewQueue.push(event);
         }
+        trimDeviceState(device);
 
         json(res, 201, {
           deviceId,
@@ -277,9 +359,15 @@ function createApp({ apiToken = process.env.AGENT_API_TOKEN } = {}) {
           return;
         }
 
-        const commands = normalizeActions({ prompt: body.prompt, actions: body.actions });
+        let commands;
+        try {
+          commands = normalizeActions({ prompt: body.prompt, actions: body.actions });
+        } catch (error) {
+          throw createBadRequestError(error.message);
+        }
         device.queue.push(...commands);
         device.updatedAt = new Date().toISOString();
+        trimDeviceState(device);
 
         json(res, 201, {
           deviceId,
@@ -327,6 +415,11 @@ function createApp({ apiToken = process.env.AGENT_API_TOKEN } = {}) {
           return;
         }
 
+        if (command.status !== 'dispatched') {
+          json(res, 409, { error: 'Command must be dispatched before submitting a result.' });
+          return;
+        }
+
         const body = await readJson(req);
         const status = String(body.status || '').trim();
         if (!['completed', 'failed'].includes(status)) {
@@ -344,6 +437,8 @@ function createApp({ apiToken = process.env.AGENT_API_TOKEN } = {}) {
           result: command.result,
           completedAt: command.completedAt,
         });
+        trimDeviceState(device);
+        trimGlobalState();
 
         json(res, 200, results.get(command.id));
         return;
@@ -413,7 +508,7 @@ function createApp({ apiToken = process.env.AGENT_API_TOKEN } = {}) {
         }
 
         const privacyState = ensureDevicePrivacyState(device);
-        const event = privacyState.connections.find((item) => item.id === eventId);
+        const event = privacyState.reviewQueue.find((item) => item.id === eventId);
         if (!event) {
           json(res, 404, { error: 'Connection event not found.' });
           return;
@@ -430,7 +525,17 @@ function createApp({ apiToken = process.env.AGENT_API_TOKEN } = {}) {
         event.decisionSource = 'manual';
         privacyState.reviewQueue = privacyState.reviewQueue.filter((item) => item.id !== event.id);
 
+        if (body.remember !== undefined && typeof body.remember !== 'boolean') {
+          json(res, 400, { error: 'remember must be a boolean.' });
+          return;
+        }
+
         if (body.remember) {
+          if (!event.policyKey) {
+            json(res, 400, { error: 'Cannot remember a decision without an identifying target.' });
+            return;
+          }
+
           privacyState.savedConnections = [
             ...privacyState.savedConnections.filter((item) => item.policyKey !== event.policyKey),
             {
@@ -452,9 +557,10 @@ function createApp({ apiToken = process.env.AGENT_API_TOKEN } = {}) {
             }));
           privacyState.blocked = mergeBlockedItems(privacyState.blocked, denyBlocks);
         }
+        trimDeviceState(device);
 
         json(res, 200, {
-          deviceId,
+            deviceId,
           eventId: event.id,
           decision: event.decision,
           savedConnections: privacyState.savedConnections,
@@ -498,13 +604,13 @@ function createApp({ apiToken = process.env.AGENT_API_TOKEN } = {}) {
 
         const items = body.items.map((item) => {
           if (!item || typeof item !== 'object') {
-            throw new Error('Each block item must be an object.');
+            throw createBadRequestError('Each block item must be an object.');
           }
 
           const type = String(item.type || '').trim();
           const target = String(item.target || '').trim().toLowerCase();
           if (!['domain', 'app'].includes(type) || !target) {
-            throw new Error('Block items require a type of domain or app and a target.');
+            throw createBadRequestError('Block items require a type of domain or app and a target.');
           }
 
           return {
@@ -517,13 +623,19 @@ function createApp({ apiToken = process.env.AGENT_API_TOKEN } = {}) {
 
         const privacyState = ensureDevicePrivacyState(device);
         privacyState.blocked = mergeBlockedItems(privacyState.blocked, items);
+        trimDeviceState(device);
         json(res, 200, { deviceId, blocked: privacyState.blocked });
         return;
       }
 
       json(res, 404, { error: 'Not found' });
     } catch (error) {
-      json(res, 400, { error: error.message });
+      if (error && error.statusCode === 400) {
+        json(res, 400, { error: error.message });
+        return;
+      }
+
+      json(res, 500, { error: 'Internal server error.' });
     }
   }
 

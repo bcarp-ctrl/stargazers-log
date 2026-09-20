@@ -26,6 +26,7 @@ function renderDashboardHtml() {
         <section class="card">
           <h2>Connection</h2>
           <label>Device ID<input id="deviceId" value="iphone-1" /></label>
+          <button id="registerDevice">Register device</button>
           <label>API token<input id="token" placeholder="Optional x-agent-token" /></label>
           <button id="loadStatus">Load privacy status</button>
           <button id="loadBlocks">Load blocklist export</button>
@@ -99,25 +100,41 @@ function renderDashboardHtml() {
         }
       }
 
+      async function registerDevice() {
+        return callApi('/api/devices/register', {
+          method: 'POST',
+          headers: headers(true),
+          body: JSON.stringify({ deviceId: deviceId.value }),
+        });
+      }
+
+      document.getElementById('registerDevice').addEventListener('click', async () => {
+        output.textContent = await registerDevice();
+      });
+
       document.getElementById('loadStatus').addEventListener('click', async () => {
+        await registerDevice();
         output.textContent = await callApi('/api/privacy/devices/' + encodeURIComponent(deviceId.value) + '/status', {
           headers: headers(false),
         });
       });
 
       document.getElementById('loadBlocks').addEventListener('click', async () => {
+        await registerDevice();
         output.textContent = await callApi('/api/privacy/devices/' + encodeURIComponent(deviceId.value) + '/block', {
           headers: headers(false),
         });
       });
 
       document.getElementById('loadReview').addEventListener('click', async () => {
+        await registerDevice();
         output.textContent = await callApi('/api/privacy/devices/' + encodeURIComponent(deviceId.value) + '/review', {
           headers: headers(false),
         });
       });
 
       document.getElementById('submitSniff').addEventListener('click', async () => {
+        await registerDevice();
         output.textContent = await callApi('/api/privacy/sniff', {
           method: 'POST',
           headers: headers(true),
@@ -126,6 +143,7 @@ function renderDashboardHtml() {
       });
 
       document.getElementById('submitConnection').addEventListener('click', async () => {
+        await registerDevice();
         output.textContent = await callApi('/api/privacy/connections', {
           method: 'POST',
           headers: headers(true),

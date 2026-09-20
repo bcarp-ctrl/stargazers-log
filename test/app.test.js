@@ -55,6 +55,8 @@ test('serves a simple privacy tracker dashboard', async () => {
   assert.match(body, /Privacy Tracker Dashboard/);
   assert.match(body, /Analyze sniff capture/);
   assert.match(body, /Review connection/);
+  assert.match(body, /Register device/);
+  assert.match(body, /\/api\/devices\/register/);
 
   await new Promise((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
 });
@@ -135,6 +137,51 @@ test('rejects unsupported actions', async () => {
   await ctx.close();
 });
 
+test('requires dispatched command state before accepting results', async () => {
+  const ctx = await startServer();
+
+  await fetch(`${ctx.baseUrl}/api/devices/register`, {
+    method: 'POST',
+    headers: ctx.headers,
+    body: JSON.stringify({ deviceId: 'iphone-command-state' }),
+  });
+
+  const commandResponse = await fetch(`${ctx.baseUrl}/api/agent/commands`, {
+    method: 'POST',
+    headers: ctx.headers,
+    body: JSON.stringify({ deviceId: 'iphone-command-state', prompt: 'open safari' }),
+  });
+  const commandBody = await commandResponse.json();
+  const commandId = commandBody.commands[0].id;
+
+  const queuedResultResponse = await fetch(`${ctx.baseUrl}/api/devices/iphone-command-state/commands/${commandId}/result`, {
+    method: 'POST',
+    headers: ctx.headers,
+    body: JSON.stringify({ status: 'completed', result: 'done' }),
+  });
+  assert.equal(queuedResultResponse.status, 409);
+
+  await fetch(`${ctx.baseUrl}/api/devices/iphone-command-state/commands/next`, {
+    headers: { 'x-agent-token': 'test-token' },
+  });
+
+  const dispatchedResultResponse = await fetch(`${ctx.baseUrl}/api/devices/iphone-command-state/commands/${commandId}/result`, {
+    method: 'POST',
+    headers: ctx.headers,
+    body: JSON.stringify({ status: 'completed', result: 'done' }),
+  });
+  assert.equal(dispatchedResultResponse.status, 200);
+
+  const repeatedResultResponse = await fetch(`${ctx.baseUrl}/api/devices/iphone-command-state/commands/${commandId}/result`, {
+    method: 'POST',
+    headers: ctx.headers,
+    body: JSON.stringify({ status: 'failed', result: 'override' }),
+  });
+  assert.equal(repeatedResultResponse.status, 409);
+
+  await ctx.close();
+});
+
 test('analyzes privacy reports, traces origin, and stores blocked entries', async () => {
   const ctx = await startServer();
 
@@ -189,6 +236,64 @@ test('analyzes privacy reports, traces origin, and stores blocked entries', asyn
     statusBody.blocked.map((item) => item.target).sort(),
     ['.tracker.example', 'com.example.coupons'],
   );
+
+  await ctx.close();
+});
+
+test('requires boolean autoBlock and cookie boolean flags', async () => {
+  const ctx = await startServer();
+
+  await fetch(`${ctx.baseUrl}/api/devices/register`, {
+    method: 'POST',
+    headers: ctx.headers,
+    body: JSON.stringify({ deviceId: 'iphone-privacy-typing' }),
+  });
+
+  const reportResponse = await fetch(`${ctx.baseUrl}/api/privacy/reports`, {
+    method: 'POST',
+    headers: ctx.headers,
+    body: JSON.stringify({
+      deviceId: 'iphone-privacy-typing',
+      autoBlock: 'false',
+      observations: [
+        {
+          kind: 'cookie',
+          name: 'id',
+          domain: '.tracker.example',
+          partitioned: false,
+        },
+      ],
+    }),
+  });
+  assert.equal(reportResponse.status, 400);
+
+  const sniffResponse = await fetch(`${ctx.baseUrl}/api/privacy/sniff`, {
+    method: 'POST',
+    headers: ctx.headers,
+    body: JSON.stringify({
+      deviceId: 'iphone-privacy-typing',
+      autoBlock: 'false',
+      captures: [{ channel: 'wifi', remoteHost: 'ads.example' }],
+    }),
+  });
+  assert.equal(sniffResponse.status, 400);
+
+  const cookieBoolResponse = await fetch(`${ctx.baseUrl}/api/privacy/reports`, {
+    method: 'POST',
+    headers: ctx.headers,
+    body: JSON.stringify({
+      deviceId: 'iphone-privacy-typing',
+      observations: [
+        {
+          kind: 'cookie',
+          name: 'id',
+          domain: '.tracker.example',
+          partitioned: 'false',
+        },
+      ],
+    }),
+  });
+  assert.equal(cookieBoolResponse.status, 400);
 
   await ctx.close();
 });
@@ -313,6 +418,13 @@ test('queues connection review prompts and saves allow or deny decisions', async
   assert.equal(decisionBody.savedConnections.length, 1);
   assert.equal(decisionBody.blocked.length, 1);
 
+  const secondDecisionResponse = await fetch(`${ctx.baseUrl}/api/privacy/devices/iphone-review/review/${connectionBody.eventId}`, {
+    method: 'POST',
+    headers: ctx.headers,
+    body: JSON.stringify({ decision: 'allow' }),
+  });
+  assert.equal(secondDecisionResponse.status, 404);
+
   const autoDecisionResponse = await fetch(`${ctx.baseUrl}/api/privacy/connections`, {
     method: 'POST',
     headers: ctx.headers,
@@ -333,6 +445,70 @@ test('queues connection review prompts and saves allow or deny decisions', async
   assert.equal(autoDecisionResponse.status, 201);
   assert.equal(autoDecisionBody.decision, 'deny');
   assert.equal(autoDecisionBody.decisionSource, 'blocklist');
+
+  await ctx.close();
+});
+
+test('requires identifying target to remember a decision and scopes sensitive egress to outbound', async () => {
+  const ctx = await startServer();
+
+  await fetch(`${ctx.baseUrl}/api/devices/register`, {
+    method: 'POST',
+    headers: ctx.headers,
+    body: JSON.stringify({ deviceId: 'iphone-policy-key' }),
+  });
+
+  const inboundResponse = await fetch(`${ctx.baseUrl}/api/privacy/connections`, {
+    method: 'POST',
+    headers: ctx.headers,
+    body: JSON.stringify({
+      deviceId: 'iphone-policy-key',
+      connection: {
+        transport: 'wifi',
+        dataTypes: ['contacts'],
+        direction: 'inbound',
+      },
+    }),
+  });
+  const inboundBody = await inboundResponse.json();
+  assert.equal(inboundResponse.status, 201);
+  assert.equal(inboundBody.findings.some((finding) => finding.category === 'sensitive-data-egress'), false);
+
+  const invalidDirectionResponse = await fetch(`${ctx.baseUrl}/api/privacy/connections`, {
+    method: 'POST',
+    headers: ctx.headers,
+    body: JSON.stringify({
+      deviceId: 'iphone-policy-key',
+      connection: {
+        transport: 'wifi',
+        dataTypes: ['contacts'],
+        direction: 'sideways',
+      },
+    }),
+  });
+  assert.equal(invalidDirectionResponse.status, 400);
+
+  const unknownTargetResponse = await fetch(`${ctx.baseUrl}/api/privacy/connections`, {
+    method: 'POST',
+    headers: ctx.headers,
+    body: JSON.stringify({
+      deviceId: 'iphone-policy-key',
+      connection: {
+        transport: 'wifi',
+        direction: 'outbound',
+      },
+    }),
+  });
+  const unknownTargetBody = await unknownTargetResponse.json();
+  assert.equal(unknownTargetResponse.status, 201);
+  assert.equal(unknownTargetBody.promptRequired, true);
+
+  const rememberResponse = await fetch(`${ctx.baseUrl}/api/privacy/devices/iphone-policy-key/review/${unknownTargetBody.eventId}`, {
+    method: 'POST',
+    headers: ctx.headers,
+    body: JSON.stringify({ decision: 'allow', remember: true }),
+  });
+  assert.equal(rememberResponse.status, 400);
 
   await ctx.close();
 });

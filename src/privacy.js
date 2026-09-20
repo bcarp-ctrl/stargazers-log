@@ -33,6 +33,18 @@ function normalizeObservation(observation) {
       throw new Error('Cookie observations require name and domain.');
     }
 
+    function booleanField(value, fieldName) {
+      if (value === undefined) {
+        return false;
+      }
+
+      if (typeof value !== 'boolean') {
+        throw new Error(`${fieldName} must be a boolean when provided.`);
+      }
+
+      return value;
+    }
+
     const maxAgeDays = Number.isFinite(observation.maxAgeDays) ? observation.maxAgeDays : null;
     return {
       id: crypto.randomUUID(),
@@ -43,9 +55,9 @@ function normalizeObservation(observation) {
       expiresAt: String(observation.expiresAt || '').trim(),
       maxAgeDays,
       sameSite: String(observation.sameSite || '').trim().toLowerCase(),
-      partitioned: Boolean(observation.partitioned),
-      httpOnly: Boolean(observation.httpOnly),
-      secure: Boolean(observation.secure),
+      partitioned: booleanField(observation.partitioned, 'partitioned'),
+      httpOnly: booleanField(observation.httpOnly, 'httpOnly'),
+      secure: booleanField(observation.secure, 'secure'),
     };
   }
 
@@ -400,6 +412,11 @@ function normalizeConnectionEvent(connection) {
     ? connection.dataTypes.map((value) => String(value || '').trim().toLowerCase()).filter(Boolean)
     : [];
 
+  const direction = String(connection.direction || 'outbound').trim().toLowerCase();
+  if (!['inbound', 'outbound'].includes(direction)) {
+    throw new Error('Connection direction must be inbound or outbound.');
+  }
+
   return {
     id: crypto.randomUUID(),
     transport,
@@ -409,17 +426,19 @@ function normalizeConnectionEvent(connection) {
     appName: String(connection.appName || '').trim(),
     appBundleId: String(connection.appBundleId || '').trim(),
     service: String(connection.service || '').trim().toLowerCase(),
-    direction: String(connection.direction || 'outbound').trim().toLowerCase(),
+    direction,
     dataTypes,
     notes: String(connection.notes || '').trim(),
   };
 }
 
 function policyKeyForConnection(connection) {
-  return [
-    connection.transport,
-    connection.remoteHost || connection.remoteDeviceId || connection.appBundleId || connection.service || 'unknown',
-  ].join(':');
+  const target = connection.remoteHost || connection.remoteDeviceId || connection.appBundleId || connection.service;
+  if (!target) {
+    return null;
+  }
+
+  return [connection.transport, target].join(':');
 }
 
 function analyzeConnectionEvent(connection) {
@@ -447,7 +466,10 @@ function analyzeConnectionEvent(connection) {
     });
   }
 
-  if (connection.dataTypes.some((dataType) => sensitiveDataTypes.includes(dataType))) {
+  if (
+    connection.direction === 'outbound'
+    && connection.dataTypes.some((dataType) => sensitiveDataTypes.includes(dataType))
+  ) {
     findings.push({
       id: crypto.randomUUID(),
       kind: 'connection',

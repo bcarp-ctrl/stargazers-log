@@ -4,10 +4,37 @@
     "title": "stargazers-log privacy and iPhone agent API",
     "version": "1.0.0"
   },
+  "components": {
+    "securitySchemes": {
+      "agentToken": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "x-agent-token"
+      }
+    },
+    "responses": {
+      "Unauthorized": {
+        "description": "Missing or invalid x-agent-token."
+      },
+      "NotFound": {
+        "description": "Requested resource was not found."
+      }
+    }
+  },
   "paths": {
     "/": {
       "get": {
         "summary": "Serve the privacy tracker dashboard"
+      }
+    },
+    "/health": {
+      "get": {
+        "summary": "Health probe and supported capabilities",
+        "responses": {
+          "200": {
+            "description": "Service is healthy."
+          }
+        }
       }
     },
     "/api/devices/register": {
@@ -17,7 +44,41 @@
     },
     "/api/agent/commands": {
       "post": {
-        "summary": "Queue commands for a device"
+        "summary": "Queue commands for a device",
+        "security": [
+          {
+            "agentToken": []
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Commands were queued."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/api/agent/commands/{commandId}": {
+      "get": {
+        "summary": "Read status/result for a command",
+        "security": [
+          {
+            "agentToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Command status or result payload."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
       }
     },
     "/api/devices/{deviceId}/commands/next": {

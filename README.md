@@ -282,7 +282,7 @@ On iPhone, a Shortcut or app can:
 
 ## OpenAPI-style contract
 
-A machine-readable contract is available at `/home/runner/work/stargazers-log/stargazers-log/openapi.json`.
+A machine-readable contract is available at `./openapi.json`.
 
 Example payload shape for an iPhone client:
 
