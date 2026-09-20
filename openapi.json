@@ -48,9 +48,6 @@
         "responses": {
           "201": {
             "description": "Commands were queued."
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
           }
         }
       }
@@ -61,9 +58,6 @@
         "responses": {
           "200": {
             "description": "Command status or result payload."
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
           },
           "404": {
             "$ref": "#/components/responses/NotFound"
